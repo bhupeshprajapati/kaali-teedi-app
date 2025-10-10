@@ -17,61 +17,12 @@ from typing import List, Dict, Optional, Tuple
 import card_game
 import card_game_storage
 import card_game_player
+import card_game_room
 
 # -----------------------------
-# Game & Room
+# Game
 # -----------------------------
 
-
-
-class Room:
-    """Represents a lobby/room that can hold up to 15 players."""
-    MAX_PLAYERS = 15
-
-    def __init__(self, host_player_id: str, room_code: Optional[str] = None, max_players: int = MAX_PLAYERS):
-        self.room_code = room_code or card_game.gen_room_code()
-        self.host_player_id = host_player_id
-        self.max_players = min(max_players, self.MAX_PLAYERS)
-        self.players: Dict[str, card_game_player.Player] = {}  # player_id -> Player
-        self.game: Optional[Game] = None
-        self.points_rules: Dict = {}  # customizable points settings
-        print(f"[Room] Created room {self.room_code} (host={host_player_id})")
-
-    def add_player(self, player: card_game_player.Player) -> bool:
-        if len(self.players) >= self.max_players:
-            print("[Room] Add player failed: room full")
-            return False
-        if player.player_id in self.players:
-            print("[Room] Player already in room")
-            return False
-        self.players[player.player_id] = player
-        print(f"[Room] Player {player.player_id} joined ({len(self.players)}/{self.max_players})")
-        return True
-
-    def remove_player(self, player_id: str) -> bool:
-        if player_id in self.players:
-            del self.players[player_id]
-            print(f"[Room] Player {player_id} removed")
-            return True
-        return False
-
-    def list_players(self) -> List[card_game_player.Player]:
-        return list(self.players.values())
-
-    def set_points_rules(self, rules: Dict):
-        """Example rules: {"points_per_penalty_card": 1} or more complex rules"""
-        self.points_rules = rules
-        print(f"[Room] Points rules set: {rules}")
-
-    def start_game(self, deck_count: int = 1) -> 'Game':
-            if self.game and not self.game.finished:
-                raise RuntimeError("Game already in progress in this room.")
-            if len(self.players) < 2:
-                raise RuntimeError("Need at least 2 players to start.")
-            self.game = Game(room=self, deck_count=deck_count, points_rules=self.points_rules)
-            print(f"[Room] Game started in room {self.room_code} with {len(self.players)} players.")
-            return self.game
-    
 
 class Game:
     """
@@ -79,7 +30,7 @@ class Game:
     Scoring is computed per-round and accumulated.
     """
 
-    def __init__(self, room: Room, deck_count: int = 1, points_rules: Optional[Dict] = None):
+    def __init__(self, room: card_game_room.Room, deck_count: int = 1, points_rules: Optional[Dict] = None):
         self.room = room
         self.deck_count = max(1, deck_count)
         self.deck = card_game.Deck(num_decks=self.deck_count)
@@ -172,6 +123,16 @@ class Game:
         # Sample condition: if deck leftover is less than number of players, not enough for a new round
         return self.deck.remaining() < len(self.players)
 
+    @classmethod
+    def start_game(cls, room: card_game_room.Room, deck_count: int = 1) -> 'Game':
+        if room.game and not room.game.finished:
+            raise RuntimeError("Game already in progress in this room.")
+        if len(room.players) < 2:
+            raise RuntimeError("Need at least 2 players to start.")
+        game = cls(room=room, deck_count=deck_count, points_rules=room.points_rules)
+        room.game = game
+        print(f"[Room] Game started in room {room.room_code} with {len(room.players)} players.")
+        return game
 
     
 

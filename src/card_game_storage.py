@@ -7,16 +7,6 @@ import json
 import os
 from typing import List, Dict, Optional, Tuple
 
-# -----------------------------
-# Card / Deck / Utilities
-# -----------------------------
-
-SUITS = ["Hearts", "Diamonds", "Clubs", "Spades"]
-RANKS = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"]
-
-def gen_room_code(length: int = 6) -> str:
-    chars = string.ascii_uppercase + string.digits
-    return ''.join(random.choice(chars) for _ in range(length))
 
 
 # -----------------------------

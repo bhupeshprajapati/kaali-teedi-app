@@ -18,6 +18,7 @@ import card_game
 import card_game_storage
 import card_game_player
 import kaali_teedi_gameplay
+import card_game_room
 
 
 # -----------------------------
@@ -56,7 +57,7 @@ def print_scoreboard(game: kaali_teedi_gameplay.Game):
 def cli_demo():
     print("=== Kali Teedi - CLI Demo ===")
     host_id = input("Enter your user id (host): ").strip() or "host1"
-    room = kaali_teedi_gameplay.Room(host_player_id=host_id)
+    room = card_game_room.Room(host_player_id=host_id)
     # Host auto-joins
     host_player = card_game_player.Player(player_id=host_id, display_name=input("Host display name (optional): ").strip() or host_id)
     room.add_player(host_player)
@@ -93,9 +94,9 @@ def cli_demo():
     room.set_points_rules(rules or {"points_per_remaining_card": 1})
 
     # Start game
-    game = room.start_game(deck_count=1)
+    game = kaali_teedi_gameplay.Game.start_game(deck_count=1, room=room)
 
-    storage = card_game_storage.JSONScoreStorage()  # default json file
+    storage = card_game_storage.JSONScoreStorage() 
 
     # Play loop
     while True:
