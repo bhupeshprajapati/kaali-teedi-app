@@ -1,140 +1,124 @@
 #!/usr/bin/env python3
 """
-kali_teedi.py
-Prototype OOP implementation for a turn-based Kali Teedi style card game.
-- Max players: 15
-- One or more decks supported via Deck(num_decks=...)
-- Room codes: unique 6-character alphanumeric
-- Scores saved to JSON by default; MySQL storage class provided as a stub
-- CLI flow: create room -> join players -> set points -> play rounds -> scoreboard
+FastAPI implementation for Kali Teedi card game.
 """
 
-import random
-import string
-import json
-import os
-from typing import List, Dict, Optional, Tuple
-import card_game
-import card_game_storage
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import Dict, Optional
 import card_game_player
-import kaali_teedi_gameplay
 import card_game_room
+import kaali_teedi_gameplay
+import card_game_storage
 
+app = FastAPI()
 
-# -----------------------------
-# Presentation Utilities
-# -----------------------------
-
-def format_table(rows: List[Tuple], headers: List[str]) -> str:
-    """Simple ASCII table formatting without external libs."""
-    # Compute column widths
-    cols = len(headers)
-    widths = [len(h) for h in headers]
-    for r in rows:
-        for i, cell in enumerate(r):
-            widths[i] = max(widths[i], len(str(cell)))
-    # Build header
-    sep = "+" + "+".join("-" * (w + 2) for w in widths) + "+"
-    header_row = "| " + " | ".join(h.ljust(widths[i]) for i, h in enumerate(headers)) + " |"
-    lines = [sep, header_row, sep]
-    # Rows
-    for r in rows:
-        row = "| " + " | ".join(str(r[i]).ljust(widths[i]) for i in range(cols)) + " |"
-        lines.append(row)
-    lines.append(sep)
-    return "\n".join(lines)
-
-
-def print_scoreboard(game: kaali_teedi_gameplay.Game):
-    board = game.get_scoreboard()
-    rows = [(idx+1, pid, name, score) for idx, (pid, name, score) in enumerate(board)]
-    print(format_table(rows, ["Pos", "Player ID", "Name", "Score"]))
+# In-memory storage for demo purposes
+rooms: Dict[str, card_game_room.Room] = {}
 
 # -----------------------------
-# CLI flow (example)
+# Request Models
 # -----------------------------
 
-def cli_demo():
-    print("=== Kali Teedi - CLI Demo ===")
-    host_id = input("Enter your user id (host): ").strip() or "host1"
-    room = card_game_room.Room(host_player_id=host_id)
-    # Host auto-joins
-    host_player = card_game_player.Player(player_id=host_id, display_name=input("Host display name (optional): ").strip() or host_id)
+class CreateRoomRequest(BaseModel):
+    host_id: str
+    host_name: str
+
+class AddPlayerRequest(BaseModel):
+    room_code: str
+    player_id: str
+    display_name: str
+
+class SetRulesRequest(BaseModel):
+    room_code: str
+    points_per_remaining_card: int = 1
+    winner_bonus: Optional[int] = None
+
+class StartGameRequest(BaseModel):
+    room_code: str
+    deck_count: int = 1
+
+class PlayRoundRequest(BaseModel):
+    room_code: str
+
+# -----------------------------
+# API Endpoints
+# -----------------------------
+
+@app.post("/create_room")
+def create_room(req: CreateRoomRequest):
+    room = card_game_room.Room(host_player_id=req.host_id)
+    host_player = card_game_player.Player(player_id=req.host_id, display_name=req.host_name)
     room.add_player(host_player)
+    rooms[room.room_code] = room
+    return {"room_code": room.room_code, "host_id": req.host_id, "host_name": req.host_name}
 
-    # Join other players
-    while True:
-        add_more = input("Add another player? (y/n): ").strip().lower()
-        if add_more != 'y':
-            break
-        pid = input("Player id: ").strip()
-        if not pid:
-            print("Invalid id")
-            continue
-        pname = input("Display name (optional): ").strip() or pid
-        p = card_game_player.Player(player_id=pid, display_name=pname)
-        if not room.add_player(p):
-            print("Could not add player.")
-    print(f"Players in room {room.room_code}: {[p.display_name for p in room.list_players()]}")
-    # Host sets points rules
-    print("Set points rules for game (leave blank for defaults).")
-    ppr = input("points_per_remaining_card (default 1): ").strip()
-    winner_bonus = input("winner_bonus (default sum of penalties): ").strip()
-    rules = {}
-    if ppr:
-        try:
-            rules["points_per_remaining_card"] = int(ppr)
-        except:
-            rules["points_per_remaining_card"] = 1
-    if winner_bonus:
-        try:
-            rules["winner_bonus"] = int(winner_bonus)
-        except:
-            pass
-    room.set_points_rules(rules or {"points_per_remaining_card": 1})
+@app.post("/add_player")
+def add_player(req: AddPlayerRequest):
+    room = rooms.get(req.room_code)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    player = card_game_player.Player(player_id=req.player_id, display_name=req.display_name)
+    if not room.add_player(player):
+        raise HTTPException(status_code=400, detail="Could not add player")
+    return {"success": True, "player_id": req.player_id, "display_name": req.display_name}
 
-    # Start game
-    game = kaali_teedi_gameplay.Game.start_game(deck_count=1, room=room)
+@app.post("/set_rules")
+def set_rules(req: SetRulesRequest):
+    room = rooms.get(req.room_code)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    rules = {"points_per_remaining_card": req.points_per_remaining_card}
+    if req.winner_bonus is not None:
+        rules["winner_bonus"] = req.winner_bonus
+    room.set_points_rules(rules)
+    return {"success": True, "rules": rules}
 
-    storage = card_game_storage.JSONScoreStorage() 
+@app.post("/start_game")
+def start_game(req: StartGameRequest):
+    room = rooms.get(req.room_code)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    try:
+        game = kaali_teedi_gameplay.Game.start_game(room=room, deck_count=req.deck_count)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"success": True, "room_code": req.room_code, "deck_count": req.deck_count}
 
-    # Play loop
-    while True:
-        round_res = game.play_round()
-        # Display round delta and scoreboard
-        print("\nRound result delta:")
-        for pid, delta in round_res["delta"].items():
-            print(f"  {pid}: {delta}")
-        print("\nScores after round:")
-        print_scoreboard(game)
+@app.post("/play_round")
+def play_round(req: PlayRoundRequest):
+    room = rooms.get(req.room_code)
+    if not room or not room.game:
+        raise HTTPException(status_code=404, detail="Game not found")
+    round_result = room.game.play_round()
+    # Optionally persist scores
+    storage = card_game_storage.JSONScoreStorage()
+    scoreboard_dict = {pid: score for pid, _, score in room.game.get_scoreboard()}
+    storage.save_game_scores(room_code=room.room_code, scoreboard=scoreboard_dict)
+    return round_result
 
-        # Persist this game's latest scoreboard into storage
-        scoreboard_dict = {pid: score for pid, _, score in game.get_scoreboard()}
-        storage.save_game_scores(room_code=room.room_code, scoreboard=scoreboard_dict)
+@app.get("/scoreboard/{room_code}")
+def get_scoreboard(room_code: str):
+    room = rooms.get(room_code)
+    if not room or not room.game:
+        raise HTTPException(status_code=404, detail="Game not found")
+    board = room.game.get_scoreboard()
+    return {"scoreboard": board}
 
-        # Ask user: restart current game with same players? or quit to new room?
-        choice = input("\nOptions: (r)estart same game (same players), (c)ontinue next round, (q)uit to new room: ").strip().lower()
-        if choice == 'r':
-            # Reset scores and start a new Game instance with same players
-            for p in game.players:
-                p.score = 0
-            game = room.start_game(deck_count=1)
-            continue
-        elif choice == 'c':
-            # Continue next round until deck insufficient
-            if game.is_game_over():
-                print("Not enough cards to deal another full round. End of game.")
-                break
-            else:
-                continue
-        else:
-            print("Quitting to new room screen.")
-            break
+@app.get("/players/{room_code}")
+def list_players(room_code: str):
+    room = rooms.get(room_code)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+    players = [{"player_id": p.player_id, "display_name": p.display_name, "score": p.score} for p in room.list_players()]
+    return {"players": players}
 
-    print("Final scoreboard:")
-    print_scoreboard(game)
-    print("Returning to new room screen (exit).")
+@app.get("/rooms")
+def list_rooms():
+    return {"rooms": list(rooms.keys())}
 
+# -----------------------------
+# FastAPI entry point
+# -----------------------------
 
-if __name__ == "__main__":
-    cli_demo()
+# To run: uvicorn main:app --reload
